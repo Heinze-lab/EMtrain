@@ -435,7 +435,7 @@ def train(experiment_dir,
     
     # Build the pipline and train
     with gp.build(pipeline):
-        for i in range(num_iterations):
+        for i in range(prev_iter, num_iterations+1):
             if not i%profile_every and i != 0:
                 if comet_exp is not None:
                     # This message goes first so it is right after the profiling stats
