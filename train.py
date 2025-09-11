@@ -238,6 +238,9 @@ def train(experiment_dir,
     model_dir = os.path.join(experiment_dir, 'checkpoints')
     os.makedirs(model_dir, exist_ok=True)
 
+    checkpoints = [0] + [int(c.rsplit('_', maxsplit=1)[-1]) for c in glob(model_dir + '/*')]
+    prev_iter = max(checkpoints)
+
     temp_dir = os.path.join(experiment_dir, 'tmp')
     os.makedirs(temp_dir, exist_ok=True)
     tempfile.tempdir = temp_dir
