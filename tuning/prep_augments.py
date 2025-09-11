@@ -16,7 +16,8 @@ def get_augment_parameters(output_path,
                            eval_config=None,
                            db_host=None,
                            mode='random',
-                           return_config=False):
+                           return_config=False,
+                           exploit=False):
     
     search_space = {'elastic_spacing': np.uint64([40, 101]),
                     'elastic_jitter': np.uint64([0, 11]),
@@ -40,7 +41,8 @@ def get_augment_parameters(output_path,
         augment_config = bayesian_opt(search_space,
                                       project_dir,
                                       eval_config,
-                                      db_host)
+                                      db_host,
+                                      exploit=exploit)
     else:
         raise NotImplementedError(f'{mode} for augment parameters search not implemented')
 
@@ -93,7 +95,8 @@ def random_search(search_space):
 def bayesian_opt(search_space,
                  project_dir,
                  eval_config,
-                 db_host=None):
+                 db_host=None,
+                 exploit=False):
     
     '''
     project_dir: Directory containing the models. The name of the directory will be considered as the project name.
@@ -168,7 +171,17 @@ def bayesian_opt(search_space,
     # Inform the optimizer
     # As far as I can tell, these are good parameters in our case
     # At the very least, they work in most cases
-    optimizer = Optimizer(list(search_space.values()), base_estimator="GP", acq_func="EI")
+    if exploit:
+        # Exploit areas with high probability to improve
+        acq_func_kwargs = {"xi": 0.000001, "kappa": 0.001}
+    else:
+        # Explores more
+        acq_func_kwargs = {"xi": 10000, "kappa": 10000}
+
+    optimizer = Optimizer(list(search_space.values()), 
+                          base_estimator='GP', 
+                          acq_func='EI',
+                          acq_func_kwargs=acq_func_kwargs)
     for p, score in zip(hyperparameters, scores):
         optimizer.tell(p, score)
 
