@@ -21,15 +21,14 @@ def get_augment_parameters(output_path,
     
     search_space = {'elastic_spacing': np.uint64([40, 101]),
                     'elastic_jitter': np.uint64([0, 11]),
-                    'prob_elastic': np.float32([0, 1]),
+                    'prob_elastic': np.float32([0.1, 0.7]),
                     'intensity_scmin': np.float32([0.5, 1]),
                     'intensity_scmax': np.float32([1, 1.5]),
                     'intensity_shmin': np.float32([-0.35, -0.05]),
                     'intensity_shmax': np.float32([0.05, 0.35]),
-                    'prob_noise': np.float32([0.01, 0.05]),
-                    'prob_missing': np.float32([0.01, 0.1]),
-                    'prob_low_contrast': np.float32([0.01, 0.1]),
-                    'prob_deform': np.float32([0.01, 0.1])
+                    'prob_noise': np.float32([0.01, 0.1]),
+                    'prob_missing': np.float32([0.01, 0.2]),
+                    'prob_low_contrast': np.float32([0.01, 0.2]),
                     }
     
     logging.info('Computing augment parameters...')
@@ -73,7 +72,6 @@ def random_search(search_space):
     # gp.DefectAugment
     prob_missing = np.random.uniform(*search_space['prob_missing'])
     prob_low_contrast = np.random.uniform(*search_space['prob_low_contrast'])
-    prob_deform = np.random.uniform(*search_space['prob_deform'])
     
     augment_config =  {
                     'elastic_spacing': elastic_spacing,
@@ -86,7 +84,6 @@ def random_search(search_space):
                     'prob_noise': prob_noise,
                     'prob_missing': prob_missing,
                     'prob_low_contrast': prob_low_contrast,
-                    'prob_deform': prob_deform
                       }
 
     return augment_config
