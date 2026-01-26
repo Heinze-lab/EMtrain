@@ -1,7 +1,9 @@
 {
-  "affs_config": {
+  "pred_config": {
             "models_per_gpu": 1,
-            "num_cache_workers": 10
+            "num_cache_workers": 10,
+            "write_affs": true,
+            "write_lsds": false
                  },
   "frag_config": {
             "context_px": [4,20,20],
