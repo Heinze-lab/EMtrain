@@ -9,6 +9,7 @@ from emtrain.utils.training.prep import prep_training_experiment
 import argparse
 import comet_ml
 import gunpowder as gp
+import json
 import logging
 import numpy as np
 import tempfile
@@ -113,12 +114,20 @@ def start_train(project_dir,
         training_config = os.path.join(experiment_dir, 'training_config.json')
     else:
         assert training_config is not None, 'Please provide a training configuration to start a new experiment.'
-        # Start new experiment
-        index = len([p for p in existing_projects if exp_name in p])
-        exp_name += str(index).zfill(2)
-        experiment_dir = os.path.join(project_dir, exp_name)
-        logging.info(f'Starting new experiment: {exp_name}')
-    
+
+        with open(training_config, 'r') as f:
+            experiment_dir = json.load(f).get('experiment_dir')
+        
+        if experiment_dir is None:
+            existing_projects = glob(os.path.join(project_dir,f'*{exp_name}*/'))
+            index = len([p for p in existing_projects if exp_name in p])
+            exp_name += str(index).zfill(2)
+            experiment_dir = os.path.join(project_dir, exp_name)
+            logging.info(f'Starting new experiment: {exp_name}')
+        else:
+            exp_name = os.path.abspath(experiment_dir).split('/')[-1]
+            logging.info(f'Starting existing experiment: {exp_name}')
+            
     logging.info('Experiment dir:')
     logging.info(f'    {experiment_dir}')
 
@@ -169,7 +178,7 @@ def start_train(project_dir,
 
     logging.info('Starting training...')
 
-    if not no_comet_log and resume_training is None:
+    if not no_comet_log and not os.path.exists(os.path.join(experiment_dir, '.comet_exp_key')):
         # New experiment
         comet_exp = comet_ml.start(project=project_name,
                                    project_name=project_name)
@@ -178,9 +187,11 @@ def start_train(project_dir,
         comet_exp.log_parameters(ground_truth_config)
         comet_exp.log_parameters(augment_config)
 
+        os.makedirs(experiment_dir, exist_ok=True)
         with open(os.path.join(experiment_dir, '.comet_exp_key'), 'w') as f:
             f.write(comet_exp.get_key())
     elif not no_comet_log:
+        # Resume an existing experiment
         with open(os.path.join(experiment_dir, '.comet_exp_key'), 'r') as f:
             exp_key = f.read()
         comet_exp = comet_ml.start(experiment_key=exp_key)
@@ -315,8 +326,9 @@ def train(experiment_dir,
                                  jitter_sigma=gp.Coordinate(elastic_jitter),
                                  subsample=8,
                                  p=prob_elastic,
+                                #  use_fast_points_transform=True,
                                  rotate=False)
-    pipeline += gp.SimpleAugment(transpose_only=[1, 2])  # transposes in dimensions [0, 1, 2]
+    pipeline += gp.SimpleAugment(transpose_only=[1, 2]) # transposes in dimensions [0, 1, 2]
     pipeline += gp.IntensityAugment(raw, 
                                     intensity_scmin, 
                                     intensity_scmax, 
