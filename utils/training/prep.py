@@ -32,49 +32,48 @@ def prep_training_experiment(experiment_dir,
     with open(ground_truth_config['ground_truth_config'], 'r') as f:
         ground_truth_config = json.load(f)
 
-    if augment_path is not None:
+    if augment_path is None:
+        logging.info('Computing config files for the new experiment.')
+        # This is a new experiment, compute new augment parameters
+        search_mode = augment_config['search_mode']
+        project_dir = os.path.abspath(experiment_dir).rsplit('/', maxsplit=1)[0] # Parent directory containing all experiments
+        exploit = augment_config.get('exploit')
+        if search_mode == 'bayesopt' and augment_path is None:
+            logging.info('Hyperparameters will be determined with bayesian optimization')
+            logging.info(f'Exploitation: {exploit}')
+
+            # Ensure that all models of this project have been evaluated before computing augments
+            project_name = project_dir.rsplit('/')[-1]
+            model_dirs = glob(os.path.join(project_dir, f'*{project_name}*/'))
+
+            output_dir = os.path.join(project_dir, 'output')
+            os.makedirs(output_dir, exist_ok=True)
+            for model_dir in model_dirs:
+                evaluate_model_checkpoints(output_dir=output_dir,
+                                        model_dir=model_dir,
+                                        eval_config=eval_config['path'],
+                                        num_workers=num_workers,
+                                        GPU_pool=GPU_ID,
+                                        checkpoints_start=eval_config['checkpoints_start'],
+                                        checkpoints_end=eval_config['checkpoints_end'],
+                                        seg_config_path='/mnt/hdd1/SRC/EMpipelines/EMtrain/emtrain/evaluate/seg_config.json'
+                                        )
+        else:
+            logging.info('Hyperparameters will be determined randomly')
+        
+        # Compute the next augment parameters
+        augment_config = get_augment_parameters(output_path=None,
+                                                project_dir=project_dir,
+                                                eval_config=eval_config['path'],
+                                                db_host=None,
+                                                mode=search_mode,
+                                                return_config=True,
+                                                exploit=exploit)
+    else:
         logging.info('Using existing config files.')
         # This is the config of an existing experiment
         with open(augment_path) as f:
             augment_config = json.load(f)
-        return training_config, ground_truth_config, model_config, augment_config
-   
-    logging.info('Computing config files for the new experiment.')
-    # This is a new experiment, compute new augment parameters
-    search_mode = augment_config['search_mode']
-    project_dir = os.path.abspath(experiment_dir).rsplit('/', maxsplit=1)[0] # Parent directory containing all experiments
-    if search_mode == 'bayesopt' and augment_path is None:
-        exploit = augment_config['exploit']
-        logging.info('Hyperparameters will be determined with bayesian optimization')
-        logging.info(f'Exploitation: {exploit}')
-
-        # Ensure that all models of this project have been evaluated before computing augments
-        project_name = project_dir.rsplit('/')[-1]
-        model_dirs = glob(os.path.join(project_dir, f'*{project_name}*/'))
-
-        output_dir = os.path.join(project_dir, 'output')
-        os.makedirs(output_dir, exist_ok=True)
-        for model_dir in model_dirs:
-            evaluate_model_checkpoints(output_dir=output_dir,
-                                       model_dir=model_dir,
-                                       eval_config=eval_config['path'],
-                                       num_workers=num_workers,
-                                       GPU_pool=GPU_ID,
-                                       checkpoints_start=eval_config['checkpoints_start'],
-                                       checkpoints_end=eval_config['checkpoints_end'],
-                                       seg_config_path='/mnt/hdd1/SRC/EMpipelines/EMtrain/emtrain/evaluate/seg_config.json'
-                                       )
-    else:
-        logging.info('Hyperparameters will be determined randomly')
-    
-    # Compute the next augment parameters
-    augment_config = get_augment_parameters(output_path=None,
-                                            project_dir=project_dir,
-                                            eval_config=eval_config['path'],
-                                            db_host=None,
-                                            mode=search_mode,
-                                            return_config=True,
-                                            exploit=exploit)
 
     # Create project dir if doesn't exist
     os.makedirs(experiment_dir, exist_ok=True)
