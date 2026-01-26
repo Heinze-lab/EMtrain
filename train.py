@@ -326,7 +326,6 @@ def train(experiment_dir,
                                  jitter_sigma=gp.Coordinate(elastic_jitter),
                                  subsample=8,
                                  p=prob_elastic,
-                                #  use_fast_points_transform=True,
                                  rotate=False)
     pipeline += gp.SimpleAugment(transpose_only=[1, 2]) # transposes in dimensions [0, 1, 2]
     pipeline += gp.IntensityAugment(raw, 
