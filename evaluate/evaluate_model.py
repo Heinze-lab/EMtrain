@@ -7,8 +7,6 @@ from pymongo import MongoClient
 from subprocess import check_call
 from tqdm import tqdm
 
-from emtrain.evaluate.workers.evaluate_model_worker import evaluate_model
-
 
 def evaluate_model_checkpoints(output_dir,
                                model_dir,
