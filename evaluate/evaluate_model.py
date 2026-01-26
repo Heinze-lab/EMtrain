@@ -110,26 +110,11 @@ def evaluate_model_checkpoints(output_dir,
 
 
 if __name__ == '__main__':
-
-    pass
-    # output_dir = '/mnt/hdd1/SRC/EMpipelines/EMtrain/output'
-    
-    # eval_config = '/mnt/hdd1/SRC/EMpipelines/EMtrain/emtrain/evaluate/volumes_config/NO_test_0_reduced.json'
-    # seg_config = '/mnt/hdd1/SRC/EMpipelines/EMtrain/emtrain/evaluate/seg_config.json'
-    # num_workers = 5
-    # GPU_pool = [2,3]
-    # checkpoints_start = 300000
-    # checkpoints_end = 1000000
-
-    # model_dirs = sorted(glob('/mnt/hdd2/DATA/segmentation_training/eciton_only/*'))
-    # # for model_dir in model_dirs:
-
-    # model_dir = model_dirs[0]
-    # evaluate_model_checkpoints(output_dir,
-    #                             model_dir,
-    #                             eval_config, 
-    #                             num_workers,
-    #                             GPU_pool,
-    #                             checkpoints_start=checkpoints_start,
-    #                             checkpoints_end=checkpoints_end,
-    #                             seg_config_path=seg_config)
+    evaluate_model_checkpoints(output_dir,
+                                model_dir,
+                                eval_config, 
+                                num_workers,
+                                GPU_pool,
+                                checkpoints_start=checkpoints_start,
+                                checkpoints_end=checkpoints_end,
+                                seg_config_path=seg_config)
