@@ -56,6 +56,10 @@ Training and evaluation are controlled via JSON configuration files. Examples ar
 - `seg_config.json` - Segmentation pipeline configuration
 - `volumes config JSONs` - Per-volume evaluation configurations
 
+## Models
+
+Trained models are available at: https://github.com/stanleyheinze/auto-segmentation-models
+
 ## Author
 
 Valentin Gillet (valentin.gillet@biol.lu.se)
