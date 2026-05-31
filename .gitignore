@@ -1,5 +1,6 @@
 *.ipynb_checkpoints
 *.ipynb
+*egg-info*
 daisy_logs/
 worker_config/
 volumes_config/
