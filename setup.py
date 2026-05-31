@@ -12,7 +12,7 @@ setup(
         author_email="valentin.gillet@biol.lu.se",
         description=DESCRIPTION,
         long_description=LONG_DESCRIPTION,
-        packages=find_packages(),
+        packages=find_packages(include=["emtrain", "emtrain.*"]),
         install_requires=['numpy', 'gunpowder', 'daisy'], 
         keywords=[]
     )
