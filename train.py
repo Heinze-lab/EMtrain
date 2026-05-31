@@ -3,6 +3,7 @@ import os
 os.environ['OMP_NUM_THREADS'] = '4'
 os.environ['MKL_NUM_THREADS'] = '4'
 
+from emtrain.models import build_model
 from emtrain.utils.comet.comet_log import comet_log_batch
 from emtrain.utils.training.prep import prep_training_experiment
 
@@ -16,7 +17,6 @@ import tempfile
 import torch
 
 from datetime import datetime
-from funlib.learn.torch.models import UNet, ConvPass
 from glob import glob
 from lsd.train.gp import AddLocalShapeDescriptor
 
@@ -24,65 +24,6 @@ from lsd.train.gp import AddLocalShapeDescriptor
 # TODO: Auto new project creation
 
 logging.basicConfig(level=logging.INFO)
-
-# Modified MSEloss function
-class WeightedMSELoss(torch.nn.MSELoss):
-    def __init__(self):
-        super(WeightedMSELoss, self).__init__()
-
-    def forward(self, prediction, target, weights):
-        return super(WeightedMSELoss, self).forward(
-                prediction*weights,
-                target*weights)
-
-class AffLsdLoss(torch.nn.Module):
-
-    def __init__(self):
-        super().__init__()
-        self.weighted_mse = WeightedMSELoss()
-        self.mse = torch.nn.MSELoss()
-
-    def forward(self, loss_pred_affs, loss_affs, loss_affs_weights, loss_pred_lsds, loss_lsds):
-
-        aff_loss = self.weighted_mse(loss_pred_affs, loss_affs, loss_affs_weights)
-        lsd_loss = self.mse(loss_pred_lsds, loss_lsds)
-        return aff_loss + lsd_loss
-        
-
-class AffsLsdModel(torch.nn.Module):
-
-    def __init__(self, num_fmaps):
-
-        super().__init__()
-        
-        self.unet = UNet(
-            in_channels=1,
-            num_fmaps=num_fmaps,
-            fmap_inc_factor=5,
-            downsample_factors=[
-                [1, 2, 2],
-                [1, 2, 2],
-                [1, 2, 2]],
-            kernel_size_down=[
-                [[3, 3, 3], [3, 3, 3]],
-                [[3, 3, 3], [3, 3, 3]],
-                [[3, 3, 3], [3, 3, 3]],
-                [[3, 3, 3], [3, 3, 3]]],
-            kernel_size_up=[
-                [[3, 3, 3], [3, 3, 3]],
-                [[3, 3, 3], [3, 3, 3]],
-                [[3, 3, 3], [3, 3, 3]]])
-
-        self.conv_affs = ConvPass(num_fmaps, 3, [[1, 1, 1]], activation='Sigmoid')
-        self.conv_lsds = ConvPass(num_fmaps, 10, [[1, 1, 1]], activation='Sigmoid')
-
-    def forward(self, input):
-
-        y = self.unet(input)
-        affs = self.conv_affs(y)
-        lsds = self.conv_lsds(y)
-
-        return affs, lsds
 
 
 def start_train(project_dir,
@@ -92,7 +33,7 @@ def start_train(project_dir,
                 training_config=None,
                 no_comet_log=False
                 ):
-    
+
     project_dir = os.path.abspath(project_dir)
     project_name = project_dir.split('/')[-1]
     year = datetime.now().year-2000
@@ -117,7 +58,7 @@ def start_train(project_dir,
 
         with open(training_config, 'r') as f:
             experiment_dir = json.load(f).get('experiment_dir')
-        
+
         if experiment_dir is None:
             existing_projects = glob(os.path.join(project_dir,f'*{exp_name}*/'))
             index = len([p for p in existing_projects if exp_name in p])
@@ -127,7 +68,7 @@ def start_train(project_dir,
         else:
             exp_name = os.path.abspath(experiment_dir).split('/')[-1]
             logging.info(f'Starting existing experiment: {exp_name}')
-            
+
     logging.info('Experiment dir:')
     logging.info(f'    {experiment_dir}')
 
@@ -136,7 +77,7 @@ def start_train(project_dir,
                                                                                                   training_config=training_config,
                                                                                                   GPU_ID=GPU_ID,
                                                                                                   num_workers=num_workers)
-    
+
     # Training parameters
     num_iterations  = training_config['training']['num_iterations']
     save_every      = training_config['training']['save_every']
@@ -157,12 +98,6 @@ def start_train(project_dir,
             raw_path = raw_data[key]
             for gt_path in ground_truths:
                 ground_truth_data.append((raw_path, gt_path, gt_zarr_dataset))
-
-    # Model parameters
-    num_fmaps       = model_config['num_fmaps']
-    input_shape     = model_config['input_shape']
-    output_shape    = model_config['output_shape']
-    voxel_size      = model_config['voxel_size'] 
 
     # Augmentation parameters
     elastic_spacing     = augment_config['elastic_spacing']
@@ -200,13 +135,10 @@ def start_train(project_dir,
 
     train(experiment_dir=experiment_dir,
           GPU_ID=GPU_ID,
-          num_workers=num_workers, 
+          num_workers=num_workers,
           cache_size=cache_size,
           ground_truth_data=ground_truth_data,
-          num_fmaps=num_fmaps,
-          input_shape=input_shape,
-          output_shape=output_shape,
-          voxel_size=voxel_size,
+          model_config=model_config,
           elastic_spacing=elastic_spacing,
           elastic_jitter=elastic_jitter,
           prob_elastic=prob_elastic,
