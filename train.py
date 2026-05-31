@@ -156,13 +156,10 @@ def start_train(project_dir,
 
 def train(experiment_dir,
           GPU_ID,
-          num_workers, 
+          num_workers,
           cache_size,
           ground_truth_data,
-          num_fmaps,
-          input_shape,
-          output_shape,
-          voxel_size,
+          model_config,
           elastic_spacing,
           elastic_jitter,
           prob_elastic,
@@ -177,7 +174,7 @@ def train(experiment_dir,
           save_every,
           snapshots_every
          ):
-    
+
     model_dir = os.path.join(experiment_dir, 'checkpoints')
     os.makedirs(model_dir, exist_ok=True)
 
@@ -187,53 +184,54 @@ def train(experiment_dir,
     temp_dir = os.path.join(experiment_dir, 'tmp')
     os.makedirs(temp_dir, exist_ok=True)
     tempfile.tempdir = temp_dir
-    
+
     profile_every = 10
 
-    # create model, loss, and optimizer
-    # compute a valid input and output size
+    # Model parameters
+    input_shape  = gp.Coordinate(model_config['input_shape'])
+    output_shape = gp.Coordinate(model_config['output_shape'])
+    voxel_size   = gp.Coordinate(model_config['voxel_size'])
+    input_size   = input_shape  * voxel_size   # world units
+    output_size  = output_shape * voxel_size
 
-    # for x and y:
-    #
-    # 124 -> 120                            40 -> 36 (with stride 8: 32)
-    #         |                              |
-    #         60 -> 56                24 -> 20
-    #                |                 |
-    #               28 -> 24    16 -> 12
-    #                      |     |
-    #                     12 ->  8
-    #
-
-    #
-    # for z:
-    #
-    # 36 -> 32                            12 -> 8
-    #       |                             |
-    #       32 -> 28                16 -> 12
-    #             |                 |
-    #             28 -> 24    20 -> 16
-    #                    |    |
-    #                   24 -> 20
-
-    voxel_size = gp.Coordinate(voxel_size)
-    input_shape = gp.Coordinate(input_shape)   # shape = voxel size
-    output_shape = gp.Coordinate(output_shape)
-    input_size = input_shape * voxel_size   # size = world unit
-    output_size = output_shape * voxel_size
-
-    # Initiate model
-    model = AffsLsdModel(num_fmaps=num_fmaps)
-    loss = AffLsdLoss()
-    optimizer = torch.optim.Adam(lr=1e-5, params=model.parameters())
+    # Build model and loss via the registry. The factory tells us, in order,
+    # which output names the model's forward returns. We allocate one
+    # ArrayKey per output and wire them through the gunpowder Train node.
+    model, loss, output_keys = build_model(model_config)
+    learning_rate = model_config.get('learning_rate', 1e-5)
+    logging.info(f'Adam learning rate: {learning_rate}')
+    optimizer = torch.optim.Adam(lr=learning_rate, params=model.parameters())
 
     # Declare gunpowder arrays
-    raw = gp.ArrayKey('RAW')
-    seg = gp.ArrayKey('SEGMENTATION')
+    raw  = gp.ArrayKey('RAW')
+    seg  = gp.ArrayKey('SEGMENTATION')
     affs = gp.ArrayKey('AFFINITIES')
-    pred_affs = gp.ArrayKey('PRED_AFFINITIES')
     lsds = gp.ArrayKey('LSDS')
-    pred_lsds = gp.ArrayKey('PRED_LSDS')
     affs_weights = gp.ArrayKey('AFFS_WEIGHTS')
+
+    # Per-architecture model output ArrayKeys (one per name in `output_keys`).
+    pred_keys = {name: gp.ArrayKey(name.upper()) for name in output_keys}
+
+    # Some outputs (e.g. SNGP's gp_logit / gp_uncertainty) live at coarser
+    # spatial resolution than the affinity/LSD outputs. We discover that
+    # downsampling by inspecting the model's gp_pool_kernel attribute, if
+    # present. Anything not flagged here uses the model's nominal voxel_size.
+    coarse_voxel_size = None
+    coarse_array_keys = []
+    if 'gp_logit' in pred_keys or 'gp_uncertainty' in pred_keys:
+        gp_pool_kernel = getattr(model, 'gp_pool_kernel', None)
+        if gp_pool_kernel is not None:
+            coarse_voxel_size = voxel_size * gp.Coordinate(gp_pool_kernel)
+        else:
+            coarse_voxel_size = voxel_size
+        for name in ('gp_logit', 'gp_uncertainty'):
+            if name in pred_keys:
+                coarse_array_keys.append(pred_keys[name])
+
+    array_specs = {
+        key: gp.ArraySpec(voxel_size=coarse_voxel_size, interpolatable=True)
+        for key in coarse_array_keys
+    }
 
     # Merge samples
     sources = [(gp.ZarrSource(store=gt[1],
@@ -247,8 +245,8 @@ def train(experiment_dir,
                 gp.RandomLocation()
               for gt in ground_truth_data]
 
-    # Create pipeline   
-    pipeline = tuple(sources) + gp.RandomProvider()  
+    # Create pipeline
+    pipeline = tuple(sources) + gp.RandomProvider()
 
     # Normalize raw greyscale data
     pipeline += gp.Normalize(raw)
@@ -260,30 +258,30 @@ def train(experiment_dir,
                                  p=prob_elastic,
                                  rotate=False)
     pipeline += gp.SimpleAugment(transpose_only=[1, 2]) # transposes in dimensions [0, 1, 2]
-    pipeline += gp.IntensityAugment(raw, 
-                                    intensity_scmin, 
-                                    intensity_scmax, 
+    pipeline += gp.IntensityAugment(raw,
+                                    intensity_scmin,
+                                    intensity_scmax,
                                     intensity_shmin,
-                                    intensity_shmax, 
+                                    intensity_shmax,
                                     z_section_wise=True)
-    pipeline += gp.NoiseAugment(raw, 
+    pipeline += gp.NoiseAugment(raw,
                                 p=prob_noise)  # change var if noise is too extreme here (variance of std dev)
-    pipeline += gp.DefectAugment(raw, 
+    pipeline += gp.DefectAugment(raw,
                                  prob_missing=prob_missing,
                                  prob_low_contrast=prob_low_contrast,
                                  prob_deform=0)
-    
+
     # Create affinities
     pipeline += gp.AddAffinities([[-1, 0, 0], [0, -1, 0], [0, 0, -1]],
                                  seg,
                                  affs,
                                  dtype='float32')
-    pipeline += gp.BalanceLabels(affs, 
+    pipeline += gp.BalanceLabels(affs,
                                  affs_weights)
 
     # Add local shape descriptors
-    pipeline += AddLocalShapeDescriptor(seg, 
-                                        lsds, 
+    pipeline += AddLocalShapeDescriptor(seg,
+                                        lsds,
                                         sigma=60.0)
 
     # we have:
@@ -310,8 +308,21 @@ def train(experiment_dir,
     # affs: (1, 3, d, h, w)
     # lsds: (1, 10, d, h, w)
 
-    pipeline += gp.PreCache(cache_size=cache_size, 
+    pipeline += gp.PreCache(cache_size=cache_size,
                             num_workers=num_workers)     # pre-load batchs, increases speed
+
+    # Generic Train node wiring. Outputs are the model's forward return
+    # values in declaration order. Loss inputs are matched by kwarg name.
+    train_outputs = {i: pred_keys[name] for i, name in enumerate(output_keys)}
+    loss_inputs = {
+        'pred_affs': pred_keys['pred_affs'],
+        'affs': affs,
+        'affs_weights': affs_weights,
+        'pred_lsds': pred_keys['pred_lsds'],
+        'lsds': lsds,
+    }
+    if 'gp_logit' in pred_keys:
+        loss_inputs['gp_logit'] = pred_keys['gp_logit']
 
     pipeline += gp.torch.Train(
         model,
@@ -320,47 +331,39 @@ def train(experiment_dir,
         inputs={
             'input': raw
         },
-        outputs={
-            0: pred_affs,
-            1: pred_lsds
-        },
-        loss_inputs={
-            'pred_affs': pred_affs,
-            'affs': affs,
-            'affs_weights': affs_weights,
-            'pred_lsds': pred_lsds,
-            'lsds': lsds
-        },
+        outputs=train_outputs,
+        loss_inputs=loss_inputs,
+        array_specs=array_specs if array_specs else None,
         checkpoint_basename=os.path.join(model_dir, 'model'),
         device=f'cuda:{','.join([str(g) for g in GPU_ID])}',
         save_every=save_every)
 
-    pipeline += gp.Squeeze([raw])           # re-squeeze arrays to have n dim fitting snapshot node
-    pipeline += gp.Squeeze([raw, 
-                            seg,
-                            affs, 
-                            pred_affs,
-                            lsds,
-                            pred_lsds
-                            ])
+    # Re-squeeze full-resolution arrays to drop the batch dim before snapshot.
+    # Coarse-resolution outputs (gp_logit, gp_uncertainty) have a different
+    # voxel size from the rest; squeezing them is still fine because gunpowder
+    # carries voxel_size on the ArraySpec.
+    pipeline += gp.Squeeze([raw])
+    full_res_squeeze = [raw, seg, affs, lsds, pred_keys['pred_affs'], pred_keys['pred_lsds']]
+    pipeline += gp.Squeeze(full_res_squeeze)
+    if coarse_array_keys:
+        pipeline += gp.Squeeze(coarse_array_keys)
 
-    # we have:
-    # raw:       (d, h, w)
-    # affs:      (3, d, h, w)
-    # pred_affs: (3, d, h, w)
-    # lsds:      (10, d, h, w)
-    # pred_lsds: (10, d, h, w)
+    snapshot_datasets = {
+        raw: 'raw',
+        seg: 'gt_seg',
+        affs: 'affs',
+        pred_keys['pred_affs']: 'pred_affs',
+        lsds: 'lsds',
+        pred_keys['pred_lsds']: 'pred_lsds',
+    }
+    if 'gp_logit' in pred_keys:
+        snapshot_datasets[pred_keys['gp_logit']] = 'gp_logit'
+    if 'gp_uncertainty' in pred_keys:
+        snapshot_datasets[pred_keys['gp_uncertainty']] = 'gp_uncertainty'
 
-    pipeline += gp.Snapshot({
-                                raw: 'raw',
-                                seg: 'gt_seg',
-                                affs: 'affs',
-                                pred_affs: 'pred_affs',
-                                lsds: 'lsds',
-                                pred_lsds: 'pred_lsds',
-                            },
+    pipeline += gp.Snapshot(snapshot_datasets,
                             output_dir=os.path.join(experiment_dir, 'snapshots'),
-                            every=snapshots_every) 
+                            every=snapshots_every)
 
     pipeline += gp.PrintProfilingStats(every=profile_every)
 
@@ -369,13 +372,18 @@ def train(experiment_dir,
     request.add(raw, input_size)
     request.add(affs, output_size)
     request.add(seg, output_size)
-    request.add(pred_affs, output_size)
     request.add(affs_weights, output_size)
     request.add(lsds, output_size)
-    request.add(pred_lsds, output_size)
+    request.add(pred_keys['pred_affs'], output_size)
+    request.add(pred_keys['pred_lsds'], output_size)
+    for key in coarse_array_keys:
+        # Same world-space ROI as the affinity outputs, but the underlying
+        # voxel_size on the ArraySpec is coarser, so the resulting tensor is
+        # smaller in each spatial dim.
+        request.add(key, output_size)
 
     comet_exp = comet_ml.get_running_experiment()
-    
+
     # Build the pipline and train
     with gp.build(pipeline):
         for i in range(prev_iter, num_iterations+1):
@@ -386,16 +394,26 @@ def train(experiment_dir,
                 else:
                     logging.warning('\x1b[1;31m' + 'Logging to comet is disabled.' + '\x1b[0m')
 
-            batch = pipeline.request_batch(request)     
+            batch = pipeline.request_batch(request)
 
-            if comet_exp is not None:      
+            if comet_exp is not None:
                 url = '\x1b[36m' + comet_exp.url + '\x1b[0m' # url in blue because it looks fancy
 
                 comet_log_batch(i, batch, request, loss_every=1, img_every=10000)
 
                 if not i%save_every and i != 0:
-                    comet_exp.log_model(comet_exp.project_name, 
+                    comet_exp.log_model(comet_exp.project_name,
                                         os.path.join(model_dir, f'model_checkpoint_{i}'))
+
+    # If this is an SNGP-style model, cache the inverse precision once at end
+    # of training so that downstream inference doesn't pay the inversion cost.
+    if hasattr(model, 'finalize_gp_precision'):
+        logging.info('Finalizing GP precision matrix for inference.')
+        model.finalize_gp_precision()
+        torch.save(
+            model.state_dict(),
+            os.path.join(model_dir, f'model_checkpoint_{num_iterations}_finalized'),
+        )
 
 
 if __name__ == '__main__':
@@ -420,7 +438,7 @@ if __name__ == '__main__':
                         nargs='+',
                         default=0,
                         type=int,
-                        help='GPU PID to use for training. Default: 0')   
+                        help='GPU PID to use for training. Default: 0')
     parser.add_argument('-c', '--cores',
                         metavar='CORES',
                         dest='num_workers',
